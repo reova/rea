@@ -201,9 +201,10 @@ remains valid. This tool
 has no dedicated CLI command; the existing `decompile` command remains the
 single-procedure CLI operation.
 
-`inspect_analysis_view` reads a summary, rows or one body from the retained
-record, an Evidence file or a portable bundle without repeating decompilation:
-see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
+`detail: "summary"` retains the complete batch and returns only its counts,
+identities and sizes. `inspect_analysis_view` then reads rows or one body from
+the retained record, an Evidence file or a portable bundle without repeating
+decompilation: see [selected batch results](mcp-contracts.md#selected-batch-decompile-results).
 
 Each batch schedules one provider read at a time, but has no shared input-count
 or aggregate retained-output allowance. It retains every requested row and full
@@ -386,6 +387,11 @@ ambiguous candidates, inferred untyped provider callees and targetless call
 sites remain distinct. A static route does not establish runtime reachability.
 Swift/closure dispatch requires resolved static references; unavailable ABI
 forms remain unknown.
+
+Encoded Objective-C method records retain their own locations in dispatch
+Evidence. A handler node uses the implementation address with an unknown file
+offset unless that function already has an independently located graph node;
+the method-record offset does not locate the handler's code.
 
 Incomplete reference kinds do not discard known typed calls or partial
 provider call references. A `provider_call` with `observed` resolution retains
@@ -1003,7 +1009,9 @@ with a path-specific gap and incomplete capture coverage. Null alone does not
 establish that an accessibility value was successfully read or absent.
 
 An initial PID or window mismatch is `invalid_request` on `pid` or
-`window_id` and leaves provider availability intact. An unavailable executable
+`window_id` and leaves provider availability intact. A selected window that
+exists off screen is not a mismatch: selection succeeds and the permission and
+capture checks report their own outcome. An unavailable executable
 URL or unresolved executable path leaves identity unknown and reports
 `capability_unavailable`. Identity or window loss
 after the initial capture remains an observation failure with collected facts.

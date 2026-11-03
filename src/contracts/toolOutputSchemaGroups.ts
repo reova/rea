@@ -10,6 +10,7 @@ import {
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
   interfaceBuilderSummaryViewResultSchema,
@@ -45,6 +46,7 @@ import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { byteSearchResultSchema } from "../domain/native/bytePattern.js";
 import {
   evidenceBundleSummarySchema,
+  evidenceLinkInspectionSchema,
   evidenceRecordSelectionSchema,
 } from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
@@ -324,7 +326,10 @@ export const enhancedOutputSchemas = {
   get_objc_classes: objcClassDiscoveryOutput,
   get_objc_protocols: symbolDiscoveryOutput("protocols"),
   decompile_all: evidenceResultOf(decompileDirectoryManifestSchema),
-  batch_decompile: evidenceResultOf(batchDecompileResultSchema),
+  batch_decompile: analysisDetailOutputSchemaOf(
+    batchDecompileResultSchema,
+    batchDecompileSummaryViewResultSchema,
+  ),
   get_call_graph: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.get_call_graph,
     nativeObservationSummaryViewResultSchemas.get_call_graph,
@@ -533,6 +538,7 @@ export const sessionOutputSchemas = {
       evidenceBundleSchema,
       evidenceBundleSummarySchema,
       evidenceRecordSelectionSchema,
+      evidenceLinkInspectionSchema,
     ]),
   ),
   get_navigation_context: lifecycleResultOf(
