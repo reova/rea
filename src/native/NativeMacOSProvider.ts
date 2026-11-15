@@ -99,6 +99,7 @@ import {
 import { createPlistNumberProjection } from "../domain/apple/plistNumbers.js";
 import type { NativeUiObservationResult } from "../domain/native/nativeUiObservation.js";
 import { parseXmlPropertyList } from "../domain/propertyListKeys.js";
+import { plistDuplicateKeyLimitations } from "../domain/apple/plistDuplicateKeys.js";
 import { machoKnownCodeSignSelector } from "./MachoArchitectureSelection.js";
 import {
   demangleSwiftSchema,
@@ -1414,6 +1415,13 @@ class NativeMacOSClient implements AnalysisClient {
                 selected,
                 Math.floor(NATIVE_COMMAND_OUTPUT_BUDGET_BYTES / 256),
               ),
+            readSliceRange: (offset, size, at, length) =>
+              source.readSlice(
+                offset,
+                size ?? source.bytes - offset,
+                at,
+                length,
+              ),
             readCommandNames: async (offset, size, selected) => {
               const length = size ?? source.bytes - offset;
               // Binary strings can expand to hex and escaped JSON, and each
@@ -2176,6 +2184,7 @@ const parseEntitlements = (
     value,
     limitations: [
       ...numbers.limitations(),
+      ...plistDuplicateKeyLimitations(decoded.duplicateKeys),
       ...(projected.nonFiniteRealCount === 0
         ? []
         : [nonFiniteRealLimitation(projected.nonFiniteRealCount)]),

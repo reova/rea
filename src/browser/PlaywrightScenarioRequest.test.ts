@@ -6,6 +6,7 @@ import type { BrowserScenarioAction } from "../domain/browserScenarioValues.js";
 import { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
 import { responsePointerValue } from "./BrowserScenarioResponseValues.js";
 import { performPlaywrightScenarioAction } from "./PlaywrightScenarioActions.js";
+import { waitFor } from "../../tests/support/testWait.js";
 
 const ORIGIN = "https://app.example.test";
 
@@ -410,12 +411,15 @@ describe("request route cleanup", () => {
       const page = fakePage({});
       const secrets = resolved(parsed);
       const cancel = new AbortController();
-      const began = Date.now();
+      const began = performance.now();
       const unroute = vi.spyOn(page, "unroute").mockImplementation(async () => {
         if (end === "cancellation")
           cancel.abort("cancelled during final route cleanup");
         else {
-          const now = vi.spyOn(Date, "now").mockReturnValue(began + 5001);
+          // The step deadline is monotonic; move that clock past it.
+          const now = vi
+            .spyOn(performance, "now")
+            .mockReturnValue(began + 6_000);
           onTestFinished(() => now.mockRestore());
         }
       });
@@ -1614,7 +1618,7 @@ describe("ambiguous saved response observations", () => {
     ]);
     const running = perform(page, parsed.actions[0]!, secrets);
     const rejected = expect(running).rejects.toThrow("ambiguous");
-    await vi.waitFor(() => expect(reads.count).toBe(1));
+    await waitFor(() => expect(reads.count).toBe(1));
     for (const listener of listeners)
       listener({ method: () => "POST", url: () => `${ORIGIN}/api/items` });
     release('{"id":"wrong-object"}');

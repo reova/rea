@@ -62,7 +62,7 @@ export class ProcessCaptureError extends AnalysisError {
     this.reason =
       options?.reason ??
       (options?.userCategory === "cancelled" ? "cancelled" : "capture_failed");
-    this.cleanupIncomplete ||= this.reason === "cleanup_incomplete";
+    if (this.reason === "cleanup_incomplete") this.markCleanupIncomplete(true);
     this.executionFailure = options?.executionFailure ?? message;
     this.partialObservation = options?.partialObservation;
     this.cleanupReport = options?.cleanupReport;
@@ -200,9 +200,7 @@ export class ProcessCaptureInspectionFailure extends ProcessCaptureError {
         ...(darwin?.capturedOutput === undefined
           ? {}
           : { capturedOutput: darwin.capturedOutput }),
-        ...(darwin?.compilerOutcome?.outcome === "timed_out"
-          ? { retryable: true }
-          : {}),
+        ...(darwin?.compilerTimedOut === true ? { retryable: true } : {}),
         ...(inspectionFailure instanceof ProcessOwnershipIdentityBatchFailure
           ? {
               diagnostics: {
