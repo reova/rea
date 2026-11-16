@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { CutterBridgeSource } from "../domain/cutterDiscovery.js";
+import { sha256Hex } from "../kernel/sha256Hex.js";
 
 const PACKAGED_PLUGIN = new URL(
   "../../bridge/cutter/rea_bridge.py",
@@ -13,6 +13,21 @@ const PACKAGED_PLUGIN = new URL(
 /** Packaged plugin path a user copies into Cutter's `plugins/python` directory. */
 export const packagedCutterPluginPath = (plugin = PACKAGED_PLUGIN): string =>
   fileURLToPath(plugin);
+
+/**
+ * What to do when a session does not run the packaged plugin. A plugin with
+ * no published digest still runs, but REA cannot tell which source it is.
+ */
+export const cutterBridgeSourceRecovery = (
+  source: CutterBridgeSource,
+  plugin = PACKAGED_PLUGIN,
+): string | undefined => {
+  if (source === "packaged") return undefined;
+  const recopy = `Copy ${packagedCutterPluginPath(plugin)} into Cutter's plugins/python directory, restart Cutter, and list sessions again.`;
+  return source === "unknown"
+    ? `The running plugin publishes no SHA-256, so its source is unknown. ${recopy}`
+    : recopy;
+};
 
 const packagedDigests = new Map<string, string>();
 
@@ -38,7 +53,7 @@ const packagedCutterPluginDigest = (operation: string, plugin: URL): string => {
       { cause, remediationAction: remediation, userMessage: remediation },
     );
   }
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  const digest = sha256Hex(bytes);
   packagedDigests.set(plugin.href, digest);
   return digest;
 };

@@ -1,21 +1,26 @@
+import { MAX_NODE_TIMER_DELAY_MS } from "../domain/analysisResourceLimits.js";
 import { readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { expect, it } from "vitest";
-import {
-  evmInterfaceFailure,
-  evmReplyBudgetFailure,
-} from "./EvmoleFailures.js";
+import { evmFailureDialect, evmReplyBudgetFailure } from "./EvmoleFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   DEFAULT_EVM_TIMEOUT_MS,
-  MAX_EVM_TIMEOUT_MS,
   selectedEvmProducerLimits,
 } from "../domain/evm/evmInterface.js";
 import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+
+/** Classify a raw failure the way the provider does, through EVMole's dialect. */
+const evmInterfaceFailure = (
+  cause: unknown,
+  context: Parameters<typeof evmFailureDialect>[0],
+) => classifyProviderFailure(cause, evmFailureDialect(context));
 
 const snapshot: ProviderProcessSnapshot = {
   stdout: { text: "selected output", bytes: 15, observedBytes: 15 },
@@ -79,6 +84,10 @@ it.each([
     expect(result.capturedOutput).toEqual({
       stdout: "selected output",
       stderr: "warning",
+      stdout_bytes: 15,
+      stderr_bytes: 7,
+      exit_code: 0,
+      signal: null,
       truncated: false,
     });
     expect(result.cleanupIncomplete).toBe(false);
@@ -105,8 +114,16 @@ it("names timeout_ms, the omitted default, and the caps it does not raise", () =
   });
   expect(projected.message).toContain("timeout_ms");
   expect(projected.message).toContain(String(DEFAULT_EVM_TIMEOUT_MS));
-  expect(projected.remediation.action).toContain("--timeout-ms");
-  expect(projected.remediation.action).toContain(String(MAX_EVM_TIMEOUT_MS));
+  expect(projected.remediation.action).not.toContain("--");
+  expect(projected.details?.limit).toMatchObject({
+    control_kind: "parameter",
+    parameter: "timeout_ms",
+    effective_value: 45_000,
+    default_value: DEFAULT_EVM_TIMEOUT_MS,
+  });
+  expect(projected.remediation.action).toContain(
+    String(MAX_NODE_TIMER_DELAY_MS),
+  );
   expect(projected.remediation.action).toContain("does not raise");
   expect(projected.remediation.action).toContain("no server restart");
 });
@@ -166,6 +183,31 @@ it("reports the selected carrier input allowance as a resource constraint", () =
   expect(projected.remediation.action).toContain("producer_limits.input_bytes");
   expect(projected.remediation.action).toContain("4194304");
   expect(projected.recovery).toBeUndefined();
+});
+
+it("names a selected carrier that is a directory as invalid input", () => {
+  const source = Object.assign(new Error("EISDIR: illegal operation"), {
+    code: "EISDIR",
+  });
+  const projected = projectAnalysisError(
+    evmInterfaceFailure(source, {
+      phase: "artifact-read",
+      path: "/selected",
+    }),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_value",
+          message:
+            "Selected bytecode carrier could not be read (EISDIR): /selected.",
+        },
+      ],
+    },
+  });
 });
 
 it.each([

@@ -1,10 +1,19 @@
 import { spawn } from "node:child_process";
 import { expect, it } from "vitest";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { ArtifactReaderFailure } from "../resources/ArtifactReader.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { wabtFailure } from "./WabtFailures.js";
+import { wabtFailureDialect } from "./WabtFailures.js";
+import { classifyProviderFailure } from "../providers/classifyProviderFailure.js";
+
 import { WASM_RESOURCE_DEFAULTS } from "../domain/wasm/wasmArtifact.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { UnclassifiedProviderFailure } from "../domain/unclassifiedProviderFailure.js";
+
+/** Classify a raw failure the way the provider does, through WABT's dialect. */
+const wabtFailure = (
+  cause: unknown,
+  ...dialect: Parameters<typeof wabtFailureDialect>
+) => classifyProviderFailure(cause, wabtFailureDialect(...dialect));
 
 it.each(["configuration", "artifact"] as const)(
   "keeps host allocation failure distinct from %s readiness and byte admission",
@@ -38,26 +47,26 @@ it.each(["configuration", "producer"] as const)(
     const failure = wabtFailure(cause, phase, "/module.wasm", {
       commandTimeoutMs: 1234,
     });
-    expect(failure.cause).toBe(cause);
+    // The typed timeout stays the cleanup primary, so its control is the
+    // composite's own limit.
+    expect(failure.cleanupPrimary?.cause).toBe(cause);
     const projected = projectAnalysisError(failure);
     expect(projected).toMatchObject({
       code: "cleanup_incomplete",
       retryable: false,
       details: {
         resources: ["pid:owned-fixture"],
+        limit: {
+          setting: "wasm.command_timeout_ms",
+          effective_value: 1234,
+          parameter: "command_timeout_ms",
+          update_mode: "runtime",
+          pending_restart: false,
+        },
         diagnostics: {
-          previous_error: {
+          primary_error: {
             code: "provider_timeout",
-            details: {
-              timeout_ms: 1234,
-              limit: {
-                setting: "wasm.command_timeout_ms",
-                effective_value: 1234,
-                update_mode: "runtime",
-                pending_restart: false,
-              },
-            },
-            recovery: { kind: "inspect_timeout_state", timeout_ms: 1234 },
+            details: { timeout_ms: 1234 },
           },
         },
       },
@@ -175,10 +184,17 @@ it.each([
     const original = wabtFailure(cause, "configuration", "/selected.wasm");
     expect(failure._tag).toBe(original._tag);
     expect(failure.cleanupIncomplete).toBe(original.cleanupIncomplete);
-    expect(failure.cause).toBe(original.cause);
+    // A cleanup failure composes around the typed primary that owns the cause.
+    const primary = (error: typeof failure) => error.cleanupPrimary ?? error;
+    expect(primary(failure).cause).toBe(primary(original).cause);
     expect(projectAnalysisError(failure)).toMatchObject({
       code,
-      details: { diagnostics: probe },
+      details: {
+        diagnostics:
+          cleanup === null
+            ? probe
+            : { primary_error: { details: { diagnostics: probe } } },
+      },
     });
   },
 );
@@ -242,6 +258,13 @@ it.each([false, true])(
     if (!cleanup) {
       expect(projected.remediation.action).toContain("max_input_bytes");
       expect(projected.remediation.action).not.toContain("evidence reply");
+      expect(projected.remediation.action).not.toContain("--");
+      expect(projected.details?.limit).toMatchObject({
+        control_kind: "parameter",
+        parameter: "max_input_bytes",
+        effective_value: WASM_RESOURCE_DEFAULTS.inputBytes,
+        default_value: WASM_RESOURCE_DEFAULTS.inputBytes,
+      });
     }
     expect(
       wabtFailure(cause, "artifact", "selected.wasm").cleanupResources,
@@ -317,6 +340,26 @@ it("reports a WABT tool the host refused to start as unavailable", async () => {
   ).toMatchObject({ code: "capability_unavailable" });
 });
 
+it.each(["artifact", "producer"] as const)(
+  "reports an unrecognised WABT %s-phase exit with the examined outcome",
+  (phase) => {
+    const cause = new OwnedCommandFailure("process", "exited with code 2", {
+      stdout: { text: "", bytes: 0, observedBytes: 0 },
+      stderr: { text: "unexpected", bytes: 10, observedBytes: 10 },
+      exitCode: 2,
+      signal: null,
+    });
+    const failure = wabtFailure(cause, phase, "/module.wasm");
+    expect(failure).toBeInstanceOf(UnclassifiedProviderFailure);
+    expect(failure).toMatchObject({
+      providerId: "wabt-artifact",
+      examined: { failure_kind: "exited", exit_code: 2 },
+      capturedOutput: { stderr: "unexpected" },
+    });
+    expect(projectAnalysisError(failure).code).toBe("execution_failure");
+  },
+);
+
 it("keeps setup guidance when a version probe's output cannot be collected", () => {
   const cause = new OwnedCommandFailure(
     "process",
@@ -336,3 +379,24 @@ it("keeps setup guidance when a version probe's output cannot be collected", () 
   expect(projected).toMatchObject({ code: "capability_unavailable" });
   expect(projected.remediation.action).toContain("REA_WABT_BIN_DIRECTORY");
 });
+
+it.each(["configuration", "artifact", "producer"] as const)(
+  "reports a cancelled %s-phase read as the caller's cancellation with the earlier command output",
+  (phase) => {
+    const reason = { stopped: "caller" };
+    const observedOutput = { stdout: "earlier", stderr: "", truncated: false };
+    const failure = wabtFailure(
+      new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
+        cause: reason,
+      }),
+      phase,
+      "/selected.wasm",
+      { commandTimeoutMs: 1234, observedOutput },
+    );
+    expect(failure).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: reason,
+      capturedOutput: observedOutput,
+    });
+  },
+);
