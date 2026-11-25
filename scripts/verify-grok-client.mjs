@@ -9,6 +9,8 @@ import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
+import { containsText } from "./verify/clients/result-discovery.mjs";
+import { publishClientReceipt } from "./verify/clients/receipt.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import {
   CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
@@ -122,14 +124,6 @@ await withVerifierCleanup(async () => {
       validateFormats: false,
     });
     const shellQuote = (value) => "'" + value.replaceAll("'", "'\"'\"'") + "'";
-    const containsText = (value, text) => {
-      if (typeof value === "string") return value.includes(text);
-      return (
-        value !== null &&
-        typeof value === "object" &&
-        Object.values(value).some((item) => containsText(item, text))
-      );
-    };
     const call = (name, args) => {
       lastTool = name;
       return toolCallMessage(`call_grok_${turn}`, name, args);
@@ -570,14 +564,6 @@ enabled = false
       fixtureFailure: fixture?.failure,
       verifier: lineage,
     };
-    await withVerifierCleanup(
-      () =>
-        writeFile(join(lab, "receipt.json"), JSON.stringify(receipt, null, 2)),
-      [
-        () => {
-          console.log(JSON.stringify(receipt));
-        },
-      ],
-    );
+    await publishClientReceipt(lab, receipt);
   },
 ]);
