@@ -4,7 +4,6 @@ import {
   decodeLimit,
   malformedInput,
   ParseFailureError,
-  unsupportedInput,
 } from "../domain/parseFailure.js";
 import {
   Uint8ArrayReader,
@@ -17,7 +16,7 @@ import {
   ArtifactReaderFailure,
   decodeZipEntryText,
   zipEntryNameLimitations,
-  typedZipFailure,
+  throwZipPackageFailure,
   ZIP_READER_OPTIONS,
   zipEntryPath,
   zipListingCoverage,
@@ -132,26 +131,12 @@ const wrapZipFailure = (
     throw new ArtifactReaderFailure("cancelled", "Artifact read cancelled", {
       cause: signal.reason,
     });
-  if (
-    cause instanceof ArtifactReaderFailure ||
-    cause instanceof ParseFailureError
-  )
-    throw cause;
-  const typed = typedZipFailure(cause, compressionMethod);
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "limit")
-    throw typed;
-  if (typed instanceof ArtifactReaderFailure && typed.reason === "unavailable")
-    throw unsupportedInput(
-      VSIX_PACKAGE_FORMAT,
-      `VS Code extension ZIP uses an unsupported layout: ${typed.message}`,
-      { cause: typed },
-    );
-  if (
-    typed instanceof ArtifactReaderFailure &&
-    typed.parseFailure !== undefined
-  )
-    throw malformedInput(VSIX_PACKAGE_FORMAT, typed.message, { cause: typed });
-  throw cause;
+  return throwZipPackageFailure(
+    cause,
+    VSIX_PACKAGE_FORMAT,
+    "VS Code extension",
+    compressionMethod,
+  );
 };
 
 const readMemberBytes = async (
@@ -174,25 +159,12 @@ const readMemberBytes = async (
   }
 };
 
-const splitCsv = (value: string | null): string[] => {
-  if (value === null) return [];
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const part of value.split(",")) {
-    const id = part.trim();
-    if (id === "" || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-};
-
-const asStringArray = (value: unknown): string[] => {
-  if (typeof value === "string") return splitCsv(value);
-  if (!Array.isArray(value)) return [];
+const parseExtensionList = (value: unknown): string[] => {
+  const items = typeof value === "string" ? value.split(",") : value;
+  if (!Array.isArray(items)) return [];
   const ids: string[] = [];
   const seen = new Set<string>();
-  for (const item of value) {
+  for (const item of items) {
     if (typeof item !== "string") continue;
     const id = item.trim();
     if (id === "" || seen.has(id)) continue;
@@ -590,31 +562,35 @@ const parseVsixManifestDocument = (
     const element = metadataChild(name);
     return element === undefined ? null : xmlTrimmedDirectText(element);
   };
+  const displayName = metadataText("DisplayName");
+  const description = metadataText("Description");
+  const identityAttribute = (name: string) =>
+    identityElement === undefined
+      ? null
+      : xmlTrimmedAttribute(identityElement, name);
   return {
     identity:
-      identityElement === undefined
+      identityElement === undefined &&
+      displayName === null &&
+      description === null
         ? null
         : {
-            id: xmlTrimmedAttribute(identityElement, "Id"),
-            version: xmlTrimmedAttribute(identityElement, "Version"),
-            publisher: xmlTrimmedAttribute(identityElement, "Publisher"),
-            target_platform: xmlTrimmedAttribute(
-              identityElement,
-              "TargetPlatform",
-            ),
-            display_name: metadataText("DisplayName"),
-            description: metadataText("Description"),
+            id: identityAttribute("Id"),
+            version: identityAttribute("Version"),
+            publisher: identityAttribute("Publisher"),
+            target_platform: identityAttribute("TargetPlatform"),
+            display_name: displayName,
+            description,
           },
     engine: propertyById.get("Microsoft.VisualStudio.Code.Engine") ?? null,
-    extensionDependencies: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies") ??
-        null,
+    extensionDependencies: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionDependencies"),
     ),
-    extensionPack: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack") ?? null,
+    extensionPack: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionPack"),
     ),
-    extensionKind: splitCsv(
-      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind") ?? null,
+    extensionKind: parseExtensionList(
+      propertyById.get("Microsoft.VisualStudio.Code.ExtensionKind"),
     ),
     assets,
   };
@@ -744,9 +720,9 @@ const parsePackageJsonDocument = (
       commands_total: commandRows.length,
       commands_omitted: listedCommands.omitted,
     },
-    extensionDependencies: asStringArray(record.extensionDependencies),
-    extensionPack: asStringArray(record.extensionPack),
-    extensionKind: asStringArray(record.extensionKind),
+    extensionDependencies: parseExtensionList(record.extensionDependencies),
+    extensionPack: parseExtensionList(record.extensionPack),
+    extensionKind: parseExtensionList(record.extensionKind),
     capabilities: {
       untrusted_workspaces: capabilityValue(
         record.capabilities !== null &&
